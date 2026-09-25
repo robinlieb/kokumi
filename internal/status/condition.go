@@ -38,8 +38,12 @@ func SetCondition[T client.Object](ctx context.Context, c client.Client, obj T, 
 
 // NewCondition returns the standard Ready condition for the given generation.
 func NewCondition(generation int64, condStatus metav1.ConditionStatus, reason, msg string) metav1.Condition {
+	return newTypedCondition("Ready", generation, condStatus, reason, msg)
+}
+
+func newTypedCondition(condType string, generation int64, condStatus metav1.ConditionStatus, reason, msg string) metav1.Condition {
 	return metav1.Condition{
-		Type:               "Ready",
+		Type:               condType,
 		Status:             condStatus,
 		Reason:             reason,
 		Message:            msg,

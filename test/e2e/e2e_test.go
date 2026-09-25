@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -269,6 +270,105 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+
+		It("should only accept Approvals from the kokumi server", func() {
+			By("rejecting an Approval created directly with kubectl")
+			cmd := exec.Command("kubectl", "create", "-n", namespace, "-f", "config/samples/delivery_v1alpha1_approval.yaml")
+			output, err := utils.Run(cmd)
+			Expect(err).To(HaveOccurred(), "cluster-admin must not be able to create an Approval")
+			Expect(output).To(ContainSubstring("Approvals can only be submitted through the kokumi server"))
+
+			By("still allowing Approvals to be listed by Preparation and Order")
+			cmd = exec.Command("kubectl", "get", "approvals", "-n", namespace,
+				"--field-selector", "spec.preparationRef.name=preparation-sample")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			cmd = exec.Command("kubectl", "get", "approvals", "-n", namespace,
+				"--field-selector", "spec.orderName=order-sample")
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should keep server-submitted Approvals immutable and undeletable", func() {
+			const (
+				serverSA     = "system:serviceaccount:" + namespace + ":kokumi-server"
+				controllerSA = "system:serviceaccount:" + namespace + ":" + serviceAccountName
+			)
+
+			By("accepting an Approval submitted with the kokumi-server identity")
+			cmd := exec.Command("kubectl", "create", "-n", namespace, "--as", serverSA,
+				"-f", "config/samples/delivery_v1alpha1_approval.yaml")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("rejecting updates, even from cluster-admin")
+			cmd = exec.Command("kubectl", "label", "approval", "approval-sample", "-n", namespace, "tampered=true")
+			output, err := utils.Run(cmd)
+			Expect(err).To(HaveOccurred())
+			Expect(output).To(ContainSubstring("Approvals are immutable"))
+
+			By("rejecting deletes from cluster-admin and from the server")
+			for _, as := range []string{"", serverSA} {
+				args := []string{"delete", "approval", "approval-sample", "-n", namespace}
+				if as != "" {
+					args = append(args, "--as", as)
+				}
+				output, err = utils.Run(exec.Command("kubectl", args...))
+				Expect(err).To(HaveOccurred())
+				Expect(output).To(ContainSubstring("Approvals are append-only"))
+			}
+
+			By("letting only the controller write the status")
+			statusPatch := `{"status":{"observedGeneration":1}}`
+			cmd = exec.Command("kubectl", "patch", "approval", "approval-sample", "-n", namespace,
+				"--subresource=status", "--type=merge", "-p", statusPatch)
+			output, err = utils.Run(cmd)
+			Expect(err).To(HaveOccurred())
+			Expect(output).To(ContainSubstring("owned by the kokumi controller"))
+			cmd = exec.Command("kubectl", "patch", "approval", "approval-sample", "-n", namespace, "--as", controllerSA,
+				"--subresource=status", "--type=merge", "-p", statusPatch)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should only let the controller write Preparation status", func() {
+			const digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+			preparation := fmt.Sprintf(`apiVersion: delivery.kokumi.dev/v1alpha1
+kind: Preparation
+metadata:
+  name: e2e-status-integrity
+spec:
+  orderName: e2e-status-integrity
+  source:
+    oci: oci://registry.example/source
+    baseDigest: %[1]s
+  renderer:
+    version: v1.0.0
+    digest: %[1]s
+    renderType: Manifest
+  configHash: %[1]s
+  artifact:
+    ociRef: oci://registry.example/prep@%[1]s
+    digest: %[1]s
+`, digest)
+
+			By("creating a Preparation")
+			cmd := exec.Command("kubectl", "create", "-n", namespace, "-f", "-")
+			cmd.Stdin = strings.NewReader(preparation)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				_, _ = utils.Run(exec.Command("kubectl", "delete", "preparation", "e2e-status-integrity", "-n", namespace))
+			})
+
+			By("rejecting a forged approval status")
+			cmd = exec.Command("kubectl", "patch", "preparation", "e2e-status-integrity", "-n", namespace,
+				"--subresource=status", "--type=merge",
+				"-p", `{"status":{"conditions":[{"type":"Approved","status":"True","reason":"Approved","message":"forged","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}`)
+			output, err := utils.Run(cmd)
+			Expect(err).To(HaveOccurred(), "cluster-admin must not be able to forge Preparation status")
+			Expect(output).To(ContainSubstring("owned by the kokumi controller"))
+		})
 
 		// TODO: Customize the e2e test suite with scenarios specific to your project.
 		// Consider applying sample/CR(s) and check their status and/or verifying

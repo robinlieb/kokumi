@@ -1,3 +1,7 @@
+# Shape of an Approval as recorded by the kokumi server. Approvals cannot be
+# created with kubectl (the approval-integrity admission policy rejects every
+# identity except the kokumi server); vote from the UI instead. List them with:
+#   kubectl get approvals --field-selector spec.preparationRef.name=<preparation>
 apiVersion: delivery.kokumi.dev/v1alpha1
 kind: Approval
 metadata:
@@ -6,5 +10,18 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: approval-sample
 spec:
+  orderName: order-sample
   preparationRef:
     name: preparation-sample
+    uid: 6a1d0c52-0000-0000-0000-000000000000
+    artifactDigest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  approver:
+    issuer: http://localhost:5556
+    subject: CiQ3QzFFN0U0MC0zQjFDLTRDMkEtOUUwQi01QjBDMkI4RTJBMTESBWxvY2Fs
+    username: approver1@kokumi.dev
+    email: approver1@kokumi.dev
+    groups:
+    - release-approvers
+  decision: Approve
+  comment: Reviewed the rendered diff
+  submittedTime: "2026-09-25T10:02:11.483920Z"

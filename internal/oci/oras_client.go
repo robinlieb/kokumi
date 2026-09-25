@@ -379,3 +379,33 @@ func (c *ORASClient) Push(ctx context.Context, ref Reference, sourceDir string, 
 
 	return desc.Digest.String(), nil
 }
+
+// PushReferrer pushes artifact as an OCI 1.1 referrer of subject. Registries
+// without the referrers API are handled by oras via the referrers tag schema.
+func (c *ORASClient) PushReferrer(ctx context.Context, subject Reference, artifact ReferrerArtifact) (string, error) {
+	repo, err := c.newRepository(subject.RepositoryReference())
+	if err != nil {
+		return "", fmt.Errorf("create repository for %q: %w", subject, err)
+	}
+
+	subjectDesc, err := repo.Resolve(ctx, subject.GetReference())
+	if err != nil {
+		return "", fmt.Errorf("resolve subject %s: %w", subject, err)
+	}
+
+	layerDesc, err := oras.PushBytes(ctx, repo, artifact.MediaType, artifact.Payload)
+	if err != nil {
+		return "", fmt.Errorf("push referrer blob: %w", err)
+	}
+
+	manifestDesc, err := oras.PackManifest(ctx, repo, oras.PackManifestVersion1_1, artifact.ArtifactType, oras.PackManifestOptions{
+		Subject:             &subjectDesc,
+		Layers:              []ocispec.Descriptor{layerDesc},
+		ManifestAnnotations: artifact.Annotations,
+	})
+	if err != nil {
+		return "", fmt.Errorf("push referrer manifest for %s: %w", subject, err)
+	}
+
+	return manifestDesc.Digest.String(), nil
+}

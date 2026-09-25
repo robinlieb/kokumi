@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +48,21 @@ func (u *ServingUpdater) Pending(ctx context.Context, serving *deliveryv1alpha1.
 // Failed marks the Serving as failed with the supplied error as the message.
 func (u *ServingUpdater) Failed(ctx context.Context, serving *deliveryv1alpha1.Serving, err error) error {
 	return u.set(ctx, serving, metav1.ConditionFalse, "DeploymentFailed", err.Error(), nil)
+}
+
+// Gate records the target Preparation and whether it passes the approval
+// gate. It is a no-op when the status is already up to date.
+func (u *ServingUpdater) Gate(ctx context.Context, serving *deliveryv1alpha1.Serving, target string, condStatus metav1.ConditionStatus, reason, msg string) error {
+	desired := serving.Status.DeepCopy()
+	desired.TargetPreparationName = target
+	meta.SetStatusCondition(&desired.Conditions, newTypedCondition(deliveryv1alpha1.ConditionTypeApproved, serving.Generation, condStatus, reason, msg))
+	if apiequality.Semantic.DeepEqual(desired, &serving.Status) {
+		return nil
+	}
+
+	patch := client.MergeFrom(serving.DeepCopy())
+	serving.Status = *desired
+	return u.client.Status().Patch(ctx, serving, patch)
 }
 
 func (u *ServingUpdater) set(ctx context.Context, serving *deliveryv1alpha1.Serving, condStatus metav1.ConditionStatus, reason, msg string, extra func(latest *deliveryv1alpha1.Serving)) error {

@@ -23,6 +23,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -35,6 +36,10 @@ import (
 type PantryResolver interface {
 	ResolveSource(ctx context.Context, src deliveryv1alpha1.OCISource, defaultNamespace string) (deliveryv1alpha1.OCISource, oci.Client, error)
 	ResolveDestination(ctx context.Context, dest *deliveryv1alpha1.OCIDestination, defaultDest, defaultNamespace, orderNamespace, orderName string) (string, oci.Client, error)
+	// DestinationClient returns the client authorized for the named Order's
+	// destination, or nil when the default client applies (including when
+	// the Order no longer exists).
+	DestinationClient(ctx context.Context, namespace, orderName string) (oci.Client, error)
 }
 
 // KubeResolver resolves Pantry CRD references into OCI URLs and authenticated
@@ -89,6 +94,19 @@ func (kr *KubeResolver) ResolveDestination(ctx context.Context, dest *deliveryv1
 
 	// Neither OCI nor PantryRef — use in-cluster default.
 	return defaultDest, nil, nil
+}
+
+// DestinationClient implements PantryResolver.
+func (kr *KubeResolver) DestinationClient(ctx context.Context, namespace, orderName string) (oci.Client, error) {
+	order := &deliveryv1alpha1.Order{}
+	if err := kr.Reader.Get(ctx, types.NamespacedName{Namespace: namespace, Name: orderName}, order); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get Order %q in namespace %q: %w", orderName, namespace, err)
+	}
+	_, c, err := kr.ResolveDestination(ctx, order.Spec.Destination, "", namespace, namespace, orderName)
+	return c, err
 }
 
 // ClientForPantry returns an authenticated OCI client for the named Pantry.

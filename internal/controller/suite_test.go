@@ -52,6 +52,12 @@ const (
 	testOCIRef    = "oci://registry.kokumi.svc.cluster.local:5000/order/test-resource"
 	testVersion   = "0.1.0"
 	testNamespace = "default"
+
+	testIssuer          = "https://issuer.example"
+	testApproverGroup   = "release"
+	testIneligibleGroup = "other"
+	testRendererVersion = "v1.0.0"
+	testConfigHash      = "sha256:abc123"
 )
 
 func TestControllers(t *testing.T) {
